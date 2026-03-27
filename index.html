@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI 視線傾角測量儀 (Google Sites 兼容版)</title>
+    <title>AI 視線傾角測量儀 (絕對數值版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body, html {
@@ -85,9 +85,10 @@
 
     <div id="setup" class="fixed inset-0 z-50 flex items-center justify-center bg-black/95">
         <div class="text-center p-8 max-w-sm">
-            <h1 class="text-2xl font-bold text-white mb-4">啟動測量儀</h1>
+            <h1 class="text-2xl font-bold text-white mb-4">絕對傾角測量</h1>
             <p class="text-gray-400 mb-8 text-sm">
-                若畫面無反應，請確保 Google Sites 已獲得「相機」與「動作感應器」權限。
+                目前模式：直接顯示感應器數值<br>
+                (垂直約 90°，水平約 0°)
             </p>
             <button id="start-btn" class="w-full bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold shadow-lg active:scale-95">
                 授權並開始
@@ -98,7 +99,7 @@
     <div id="ui" class="ui-panel hidden">
         <div class="flex justify-between items-center mb-6">
             <div>
-                <span class="text-[10px] text-indigo-400 font-bold uppercase tracking-widest block mb-1">REAL-TIME PITCH</span>
+                <span class="text-[10px] text-indigo-400 font-bold uppercase tracking-widest block mb-1">ABSOLUTE PITCH</span>
                 <div class="angle-val"><span id="pitch">0.0</span>°</div>
             </div>
             <button id="ai-btn" class="w-14 h-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full text-2xl shadow-lg flex items-center justify-center active:scale-90 transition-transform">
@@ -112,7 +113,8 @@
                 <span class="text-white" id="roll">0</span>
             </div>
             <div class="flex flex-col text-right">
-                <button id="reset-btn" class="text-indigo-400 border border-indigo-400/30 px-2 py-1 rounded">歸零校準</button>
+                <span class="text-gray-600">MODE</span>
+                <span class="text-indigo-400">RAW DATA</span>
             </div>
         </div>
 
@@ -131,8 +133,6 @@
         const debug = document.getElementById('debug-log');
         const sensorStatus = document.getElementById('sensor-status');
 
-        let basePitch = null;
-
         function log(msg) {
             console.log(msg);
             debug.innerText = msg;
@@ -145,7 +145,7 @@
                 const constraints = { video: { facingMode: 'environment' } };
                 const stream = await navigator.mediaDevices.getUserMedia(constraints)
                     .catch(e => {
-                        log("相機錯誤: " + e.message + " (請確認 Sites 權限)");
+                        log("相機錯誤: " + e.message);
                         return null;
                     });
                 
@@ -163,7 +163,6 @@
                         }
                     }
                     
-                    // 使用更廣泛的監聽，確保在 iframe 中能捕捉
                     window.addEventListener('deviceorientation', handleOrientation, true);
                     sensorStatus.innerText = "感應器: 已啟動";
                     sensorStatus.className = "text-green-400";
@@ -179,19 +178,22 @@
             }
         }
 
+        // 修改後的處理函數：直接顯示 beta 數值
         function handleOrientation(e) {
             if (e.beta === null) return;
             
-            if (basePitch === null) basePitch = e.beta;
-            const currentPitch = (e.beta - basePitch).toFixed(1);
-            pitchEl.innerText = currentPitch;
+            // 直接獲取 beta 作為 Pitch (仰俯角)
+            // iOS/Android 標註：90 為垂直，0 為平放
+            const rawPitch = e.beta.toFixed(1);
+            pitchEl.innerText = rawPitch;
+            
+            // 獲取 gamma 作為 Roll (側傾角)
             document.getElementById('roll').innerText = Math.round(e.gamma);
         }
 
         startBtn.onclick = init;
-        document.getElementById('reset-btn').onclick = () => { basePitch = null; };
 
-        // AI 功能維持原狀
+        // AI 功能
         document.getElementById('ai-btn').onclick = async () => {
             const box = document.getElementById('ai-text');
             box.classList.remove('hidden');
@@ -212,7 +214,7 @@
                     body: JSON.stringify({
                         contents: [{
                             parts: [
-                                { text: `當前傾角 ${pitchEl.innerText} 度，分析準星物體並給出繁體中文建議。` },
+                                { text: `當前手機偵測到的絕對傾角（Pitch）為 ${pitchEl.innerText} 度（90度代表垂直）。請分析準星對準的物體並給出繁體中文建議。` },
                                 { inlineData: { mimeType: "image/jpeg", data: imgData } }
                             ]
                         }]
