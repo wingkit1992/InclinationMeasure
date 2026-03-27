@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI 視線傾角測量儀 (Google Sites 兼容版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: #000;
+            font-family: -apple-system, system-ui, sans-serif;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        #video-container {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1; background: #111;
+        }
+
+        video { width: 100%; height: 100%; object-fit: cover; }
+
+        #crosshair {
+            position: fixed; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 200px; height: 200px;
+            z-index: 10; pointer-events: none;
+        }
+
+        .line { position: absolute; background: rgba(0, 255, 0, 0.5); }
+        .h-line { top: 50%; left: 0; width: 100%; height: 1px; }
+        .v-line { left: 50%; top: 0; width: 1px; height: 100%; }
+
+        .ui-panel {
+            position: fixed; bottom: 20px; left: 50%;
+            transform: translateX(-50%); z-index: 20;
+            width: 90%; max-width: 400px;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 24px; padding: 24px; color: white;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+
+        .angle-val {
+            font-size: 3.8rem; font-weight: 900; color: #00ff00;
+            font-family: 'Courier New', monospace; line-height: 1;
+            text-shadow: 0 0 15px rgba(0,255,0,0.3);
+        }
+
+        #status-bar {
+            position: fixed; top: 0; left: 0; width: 100%;
+            padding: 8px 15px; font-size: 11px; z-index: 100;
+            display: flex; justify-content: space-between;
+            background: rgba(0,0,0,0.4);
+            color: rgba(255,255,255,0.7);
+        }
+
+        #debug-log {
+            position: fixed; top: 40px; left: 10px; right: 10px;
+            font-size: 10px; color: #ff4444; z-index: 1000;
+            background: rgba(0,0,0,0.7); pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="status-bar">
+        <span id="protocol-indicator">協議檢測中...</span>
+        <span id="sensor-status">感應器: 待命</span>
+    </div>
+
+    <div id="debug-log"></div>
+
+    <div id="video-container">
+        <video id="v" autoplay playsinline muted></video>
+    </div>
+
+    <div id="crosshair">
+        <div class="line h-line"></div>
+        <div class="line v-line"></div>
+        <div style="position:absolute; top:50%; left:50%; width:6px; height:6px; background:red; border-radius:50%; transform:translate(-50%,-50%); box-shadow: 0 0 10px red;"></div>
+    </div>
+
+    <div id="setup" class="fixed inset-0 z-50 flex items-center justify-center bg-black/95">
+        <div class="text-center p-8 max-w-sm">
+            <h1 class="text-2xl font-bold text-white mb-4">啟動測量儀</h1>
+            <p class="text-gray-400 mb-8 text-sm">
+                若畫面無反應，請確保 Google Sites 已獲得「相機」與「動作感應器」權限。
+            </p>
+            <button id="start-btn" class="w-full bg-indigo-600 text-white px-8 py-4 rounded-2xl font-bold shadow-lg active:scale-95">
+                授權並開始
+            </button>
+        </div>
+    </div>
+
+    <div id="ui" class="ui-panel hidden">
+        <div class="flex justify-between items-center mb-6">
+            <div>
+                <span class="text-[10px] text-indigo-400 font-bold uppercase tracking-widest block mb-1">REAL-TIME PITCH</span>
+                <div class="angle-val"><span id="pitch">0.0</span>°</div>
+            </div>
+            <button id="ai-btn" class="w-14 h-14 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full text-2xl shadow-lg flex items-center justify-center active:scale-90 transition-transform">
+                ✨
+            </button>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4 text-[10px] font-mono text-gray-400 border-t border-white/10 pt-4">
+            <div class="flex flex-col">
+                <span class="text-gray-600">ROLL (側傾)</span>
+                <span class="text-white" id="roll">0</span>
+            </div>
+            <div class="flex flex-col text-right">
+                <button id="reset-btn" class="text-indigo-400 border border-indigo-400/30 px-2 py-1 rounded">歸零校準</button>
+            </div>
+        </div>
+
+        <div id="ai-text" class="hidden mt-6 p-4 bg-indigo-500/5 rounded-2xl text-xs leading-relaxed text-indigo-200 border-l-4 border-indigo-500"></div>
+    </div>
+
+    <canvas id="c" style="display:none;"></canvas>
+
+    <script>
+        const apiKey = ""; 
+        const v = document.getElementById('v');
+        const pitchEl = document.getElementById('pitch');
+        const startBtn = document.getElementById('start-btn');
+        const setup = document.getElementById('setup');
+        const ui = document.getElementById('ui');
+        const debug = document.getElementById('debug-log');
+        const sensorStatus = document.getElementById('sensor-status');
+
+        let basePitch = null;
+
+        function log(msg) {
+            console.log(msg);
+            debug.innerText = msg;
+        }
+
+        async function init() {
+            log("正在啟動...");
+            try {
+                // 1. 請求相機
+                const constraints = { video: { facingMode: 'environment' } };
+                const stream = await navigator.mediaDevices.getUserMedia(constraints)
+                    .catch(e => {
+                        log("相機錯誤: " + e.message + " (請確認 Sites 權限)");
+                        return null;
+                    });
+                
+                if (stream) {
+                    v.srcObject = stream;
+                    log("相機已連線");
+                }
+
+                // 2. 陀螺儀處理
+                if (window.DeviceOrientationEvent) {
+                    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                        const res = await DeviceOrientationEvent.requestPermission();
+                        if (res !== 'granted') {
+                            log("感應器權限被拒絕");
+                        }
+                    }
+                    
+                    // 使用更廣泛的監聽，確保在 iframe 中能捕捉
+                    window.addEventListener('deviceorientation', handleOrientation, true);
+                    sensorStatus.innerText = "感應器: 已啟動";
+                    sensorStatus.className = "text-green-400";
+                } else {
+                    log("設備不支援方向感應");
+                }
+
+                setup.classList.add('hidden');
+                ui.classList.remove('hidden');
+
+            } catch (err) {
+                log("初始化失敗: " + err.message);
+            }
+        }
+
+        function handleOrientation(e) {
+            if (e.beta === null) return;
+            
+            if (basePitch === null) basePitch = e.beta;
+            const currentPitch = (e.beta - basePitch).toFixed(1);
+            pitchEl.innerText = currentPitch;
+            document.getElementById('roll').innerText = Math.round(e.gamma);
+        }
+
+        startBtn.onclick = init;
+        document.getElementById('reset-btn').onclick = () => { basePitch = null; };
+
+        // AI 功能維持原狀
+        document.getElementById('ai-btn').onclick = async () => {
+            const box = document.getElementById('ai-text');
+            box.classList.remove('hidden');
+            box.innerText = "✨ AI 分析中...";
+
+            const canvas = document.getElementById('c');
+            canvas.width = v.videoWidth || 640;
+            canvas.height = v.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(v, 0, 0);
+
+            const imgData = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
+
+            try {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        contents: [{
+                            parts: [
+                                { text: `當前傾角 ${pitchEl.innerText} 度，分析準星物體並給出繁體中文建議。` },
+                                { inlineData: { mimeType: "image/jpeg", data: imgData } }
+                            ]
+                        }]
+                    })
+                });
+                const d = await res.json();
+                box.innerText = d.candidates?.[0]?.content?.parts?.[0]?.text || "分析失敗";
+            } catch (e) {
+                box.innerText = "API 錯誤";
+            }
+        };
+
+        document.getElementById('protocol-indicator').innerText = location.protocol.toUpperCase();
+    </script>
+</body>
+</html>
